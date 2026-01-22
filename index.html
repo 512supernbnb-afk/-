@@ -34,7 +34,7 @@
         #chart-container, #map-container { 
             background: white; height: 450px; border-radius: 12px; 
             box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
-            overflow: hidden;
+            overflow: hidden; /* 防止內容溢出 */
         }
         
         /* 滑桿樣式 */
@@ -47,12 +47,24 @@
             grid-column: 1/-1; color: #721c24; background-color: #f8d7da; 
             padding: 20px; border-radius: 8px; text-align: center; display: none; 
         }
+
+        /* --- 新增：地圖測站標籤樣式 --- */
+        .station-label {
+            background: transparent !important; /* 去掉預設白底 */
+            border: none !important;            /* 去掉邊框 */
+            box-shadow: none !important;        /* 去掉陰影 */
+            color: #333;
+            font-weight: bold;
+            font-size: 14px;
+            text-shadow: 2px 2px 2px white, -2px -2px 2px white, 2px -2px 2px white, -2px 2px 2px white; /* 白邊效果確保可讀性 */
+            margin-top: 5px; /* 與圓點的距離 */
+        }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h1>📊 嘉義市氣候距平動態展示</h1>
+        <h1>📊 嘉義市氣候變遷動態展示</h1>
 
         <div id="error-msg"></div>
 
@@ -74,22 +86,12 @@
     <script src="嘉義市氣象站/data/weather_data.js" onerror="handleLoadError()"></script>
 
     <script>
-        // --- 1. 初始化檢查 ---
         function handleLoadError() {
             const msg = document.getElementById('error-msg');
             msg.style.display = 'block';
-            msg.innerHTML = `
-                <h3>⚠️ 無法讀取資料檔案</h3>
-                <p>請確認以下事項：</p>
-                <ol style="text-align:left; display:inline-block;">
-                    <li>R 腳本是否已成功執行並產生 <code>weather_data.js</code>？</li>
-                    <li>該檔案是否位於 <code>嘉義市氣象站/data/</code> 資料夾內？</li>
-                    <li>本 HTML 檔案是否放在 <code>嘉義市氣象站</code> 的上一層目錄？</li>
-                </ol>
-            `;
+            msg.innerHTML = `<h3>⚠️ 無法讀取資料檔案</h3><p>請確認 weather_data.js 路徑是否正確。</p>`;
         }
 
-        // --- 2. 全域變數 ---
         let rawData = null;
         let map = null;
         let markers = {};
@@ -98,12 +100,11 @@
         let yearsList = [];
 
         const COLORS = {
-            temp: { high: '#e74c3c', low: '#27ae60' }, // 紅 / 綠
-            rain: { high: '#2980b9', low: '#8d6e63' }, // 藍 / 棕 (更像乾旱色)
-            nodata: '#e0e0e0'
+            temp: { high: '#e74c3c', low: '#27ae60' }, 
+            rain: { high: '#2980b9', low: '#8d6e63' }, 
+            nodata: '#bdc3c7'
         };
 
-        // --- 3. 程式進入點 ---
         window.onload = function() {
             if (typeof window.weatherData === 'undefined') {
                 handleLoadError();
@@ -116,33 +117,41 @@
         function initApp() {
             initMap();
 
-            // 整理年份
             const yearsSet = new Set(rawData.records.map(r => r.year));
             yearsList = Array.from(yearsSet).sort((a, b) => a - b);
             
-            // 設定滑桿
             const slider = document.getElementById('year-slider');
             slider.min = yearsList[0];
             slider.max = yearsList[yearsList.length - 1];
-            slider.value = yearsList[yearsList.length - 1]; // 預設最新年
+            slider.value = yearsList[yearsList.length - 1];
             slider.disabled = false;
             currentYear = parseInt(slider.value);
 
-            // 綁定事件
             slider.addEventListener('input', (e) => {
                 currentYear = parseInt(e.target.value);
                 updateDashboard();
             });
 
-            // 建立地圖測站點
+            // 初始化地圖標記 (含新增的 Tooltip 標籤)
             rawData.metadata.forEach(st => {
                 const marker = L.circleMarker([st.lat, st.lon], {
-                    radius: 12,
-                    fillOpacity: 1,
+                    radius: 14, // 稍微加大一點點，比較明顯
+                    fillOpacity: 0.9,
                     color: '#666',
-                    weight: 2,
+                    weight: 1,
                     fillColor: COLORS.nodata
-                }).bindPopup(`<b>${st.name}</b>`);
+                });
+                
+                // 1. 綁定彈出視窗 (點擊時顯示詳細資訊)
+                marker.bindPopup(`<b>${st.name}</b>`);
+                
+                // 2. 新增：綁定永久顯示的標籤 (Tooltip)
+                marker.bindTooltip(st.name, {
+                    permanent: true,    // 永遠顯示
+                    direction: 'bottom', // 顯示在圓點下方
+                    className: 'station-label', // 套用 CSS 去除背景框
+                    offset: [0, 5]      // 微調位置
+                });
                 
                 marker.addTo(map);
                 markers[st.id] = marker;
@@ -165,13 +174,12 @@
             updateDashboard();
         }
 
-        // --- 4. 核心更新邏輯 ---
         function updateDashboard() {
             document.getElementById('year-display').innerText = currentYear;
             
             const yearRecords = rawData.records.filter(r => r.year === currentYear);
             
-            // 計算當年度「區域平均」(Spatial Average)
+            // 計算當年度區域平均
             let spatialSum = 0;
             let count = 0;
             yearRecords.forEach(r => {
@@ -180,19 +188,18 @@
             });
             const spatialAvg = count > 0 ? spatialSum / count : 0;
 
-            // A. 更新地圖
+            // 更新地圖顏色
             rawData.metadata.forEach(st => {
                 const record = yearRecords.find(r => r.station_id === st.id);
                 const marker = markers[st.id];
                 
                 if (!record) {
-                    marker.setStyle({ fillColor: COLORS.nodata, color: '#ccc' });
+                    marker.setStyle({ fillColor: COLORS.nodata, color: '#999' });
                     marker.setPopupContent(`<b>${st.name}</b><br>無資料`);
                 } else {
                     const val = currentMode === 'temp' ? record.avg_temp : record.total_rain;
                     const diff = val - spatialAvg;
                     
-                    // 判斷顏色
                     let color;
                     if (currentMode === 'temp') {
                         color = diff >= 0 ? COLORS.temp.high : COLORS.temp.low;
@@ -204,33 +211,33 @@
                     
                     const unit = currentMode === 'temp' ? "°C" : "mm";
                     const diffStr = (diff > 0 ? "+" : "") + diff.toFixed(1);
+                    // 彈出視窗內容也同步白話化
                     marker.setPopupContent(`
-                        <div style="text-align:center; font-size:14px;">
+                        <div style="text-align:center;">
                             <strong style="font-size:16px;">${st.name}</strong><br>
                             數值: ${val.toFixed(1)} ${unit}<br>
-                            <span style="color:${color}; font-weight:bold;">(距平: ${diffStr})</span>
+                            <span style="color:${color}; font-weight:bold;">(比全區平均 ${diffStr})</span>
                         </div>
                     `);
                 }
             });
 
-            // B. 更新長條圖 (Time Series Anomaly)
             updateChart();
         }
 
         function updateChart() {
-            // 計算長期的「總氣候平均」(所有年份、所有測站的平均)
-            // 這樣長條圖顯示的才是「氣候變遷」趨勢
             const globalAvg = currentMode === 'temp' ? rawData.climatology[0].global_avg_temp : rawData.climatology[0].global_avg_rain;
+            const unit = currentMode === 'temp' ? "°C" : "mm";
+            
+            // 決定 Y 軸的親民名稱
+            const yAxisLabel = `與平均值的差異 (${unit})`;
 
-            // 準備每年數據
             const x = [];
             const y = [];
             const colors = [];
             const opacities = [];
             
             yearsList.forEach(yr => {
-                // 算該年的全區平均
                 const recs = rawData.records.filter(r => r.year === yr);
                 let sum = 0, n = 0;
                 recs.forEach(r => {
@@ -245,7 +252,6 @@
                     x.push(yr);
                     y.push(anomaly);
                     
-                    // 顏色與透明度邏輯
                     let color;
                     if (currentMode === 'temp') {
                         color = anomaly >= 0 ? COLORS.temp.high : COLORS.temp.low;
@@ -253,14 +259,10 @@
                         color = anomaly >= 0 ? COLORS.rain.high : COLORS.rain.low;
                     }
                     colors.push(color);
-                    
-                    // 選中的年份不透明，其他年份半透明
                     opacities.push(yr === currentYear ? 1 : 0.3);
                 }
             });
 
-            const unit = currentMode === 'temp' ? "°C" : "mm";
-            
             const trace = {
                 x: x,
                 y: y,
@@ -273,12 +275,23 @@
 
             const layout = {
                 title: {
-                    text: currentMode === 'temp' ? `歷年溫度距平 (相對於平均 ${globalAvg.toFixed(1)}${unit})` : `歷年降雨距平 (相對於平均 ${globalAvg.toFixed(0)}${unit})`,
+                    // 標題也寫得更詳細一點
+                    text: currentMode === 'temp' ? 
+                        `歷年氣溫變化 (長期平均: ${globalAvg.toFixed(1)}${unit})` : 
+                        `歷年雨量變化 (長期平均: ${globalAvg.toFixed(0)}${unit})`,
                     font: { size: 18 }
                 },
-                margin: { t: 40, l: 50, r: 20, b: 40 },
-                xaxis: { title: '年份', tickangle: -45 },
-                yaxis: { title: `距平 (${unit})` }
+                margin: { t: 50, l: 60, r: 20, b: 60 }, // 下方邊界 (b) 加大，給 X 軸標籤空間
+                xaxis: { 
+                    title: {
+                        text: '年份',
+                        standoff: 20 // 新增：這就是讓「年份」往下一點的神奇參數
+                    },
+                    tickangle: -45 
+                },
+                yaxis: { 
+                    title: yAxisLabel // 新增：使用白話文 Y 軸
+                }
             };
 
             Plotly.newPlot('chart-container', [trace], layout, {responsive: true});
